@@ -20,10 +20,14 @@ def find_ardupilot_port(baud_rate=57600, timeout=2):
         with open(LAST_PORT_FILE, "r") as f:
             last_used_port = f.read().strip()
 
-    if last_used_port and (index := ports.index(last_used_port)):
-        ports.pop(index)
-        ports.insert(0, last_used_port)
-
+    try:
+        if last_used_port and (index := ports.index(last_used_port)):
+            ports.pop(index)
+            ports.insert(0, last_used_port)
+    except ValueError as e:
+        print(f"Last used port {last_used_port} not found in available ports.")
+        
+        
     for port in ports:
         print(f"Trying port: {port}")
         try:
