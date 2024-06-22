@@ -14,20 +14,22 @@ Start the cli:
 
 You have these commands from the cli:
 
-connect: connect to a port
+**connect**: connect to a port
 
-disconnect: disconnect from a port
+**disconnect**: disconnect from a port
 
-dump: dump all parameters
+**dump**: dump all parameters
 
-exit: exit the cli
+**exit**: exit the cli
 
-get: get a parameter value. This takes regular expressions
+**get**: get a parameter value. This takes regular expressions
 
-help: show help
+**help**: show help
 
-info: show info about the connected device
+**info**: show info about the connected device
 
-quit: exit the cli
+**quit**: exit the cli
 
-set: set the value of a parameter. This writes to the flight controller
+**set**: set the value of a parameter. This writes to the flight controller
+
+
