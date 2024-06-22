@@ -1,0 +1,7 @@
+pyserial
+pymavlink
+ipython
+black
+tdqm
+prompt_toolkit
+colorama

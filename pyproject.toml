@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+python_files = "tests*.py test_*.py *_tests.py"
+
+
+[tool.black]
+line-length = 120
+target-version = ['py36', 'py37', 'py38', 'py39', 'py310', 'py311', 'py312']
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
