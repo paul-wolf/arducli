@@ -1,7 +1,12 @@
 pyserial
 pymavlink
 ipython
-black
-tdqm
+ruff>=0.6.0
+pre-commit>=3.0
+pytest>=7.0
+pytest-cov>=4.0
+pytest-mock>=3.0
+tqdm
 prompt_toolkit
 colorama
+rich

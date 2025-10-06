@@ -17,17 +17,16 @@ def find_ardupilot_port(baud_rate=57600, timeout=2):
     print("Scanning ports:", ports)
     last_used_port = None
     if os.path.exists(LAST_PORT_FILE):
-        with open(LAST_PORT_FILE, "r") as f:
+        with open(LAST_PORT_FILE) as f:
             last_used_port = f.read().strip()
 
     try:
         if last_used_port and (index := ports.index(last_used_port)):
             ports.pop(index)
             ports.insert(0, last_used_port)
-    except ValueError as e:
+    except ValueError:
         print(f"Last used port {last_used_port} not found in available ports.")
-        
-        
+
     for port in ports:
         print(f"Trying port: {port}")
         try:
@@ -38,7 +37,9 @@ def find_ardupilot_port(baud_rate=57600, timeout=2):
                 # Check for a heartbeat message
                 if connection.wait_heartbeat(timeout=1):
                     print(
-                        f"Heartbeat received from system (system {connection.target_system} component {connection.target_component}) on port {port}"
+                        f"Heartbeat received from system "
+                        f"(system {connection.target_system} "
+                        f"component {connection.target_component}) on port {port}"
                     )
                     with open(LAST_PORT_FILE, "w") as f:
                         f.write(f"{port}")

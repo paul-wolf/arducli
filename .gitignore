@@ -10,6 +10,9 @@ static/product
 .venv
 .env
 .coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
 .pydevproject
 .DS_Store
 db

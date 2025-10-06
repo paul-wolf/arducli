@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/paul/prj/arduai/backend/**)",
+      "Read(//Users/paul/prj/arduai/**)",
+      "Bash(.venv/bin/ruff check . --fix)",
+      "Bash(.venv/bin/ruff format:*)",
+      "Bash(.venv/bin/pre-commit run --all-files)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

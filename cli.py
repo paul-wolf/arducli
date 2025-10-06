@@ -1,17 +1,14 @@
+import cmd
 import re
 
-from connection import find_ardupilot_port
-from parameters import load_parameters
-from mav import MAV_TYPE, MAV_AUTOPILOT
-
-import cmd
-from pymavlink import mavutil
-
-from prompt_toolkit import PromptSession, HTML
+from prompt_toolkit import HTML, PromptSession
 from prompt_toolkit.completion import Completer, Completion
+from pymavlink import mavutil
 from rich.console import Console
-from rich.prompt import Prompt
 
+from connection import find_ardupilot_port
+from mav import MAV_AUTOPILOT, MAV_TYPE
+from parameters import load_parameters
 
 REGEX_CHARS = "[](){}^$+*?.\\|"
 
@@ -34,7 +31,11 @@ class ParameterCompleter(Completer):
 
 
 class MavlinkCLI(cmd.Cmd):
-    intro = "[green]Welcome to the pymavlink CLI.[/green] Type [bold]help[/bold] or [bold]?[/bold] to list commands.\nPress Ctrl-C to exit."
+    intro = (
+        "[green]Welcome to the pymavlink CLI.[/green] "
+        "Type [bold]help[/bold] or [bold]?[/bold] to list commands.\n"
+        "Press Ctrl-C to exit."
+    )
     prompt = HTML("(<ansiyellow>pymavlink</ansiyellow>) ")
 
     connection = None

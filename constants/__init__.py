@@ -1,1 +1,4 @@
-from .rc_option import *
+from .mav import MAV_AUTOPILOT, MAV_TYPE
+from .rc_option import RC_OPTION_DESCRIPTIONS
+
+__all__ = ["MAV_TYPE", "MAV_AUTOPILOT", "RC_OPTION_DESCRIPTIONS"]

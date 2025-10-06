@@ -1,22 +1,35 @@
 [tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "-ra -q"
-python_files = "tests*.py test_*.py *_tests.py"
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "-q",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=models",
+    "--cov=services",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
 
-[tool.black]
+[tool.ruff]
 line-length = 120
-target-version = ['py36', 'py37', 'py38', 'py39', 'py310', 'py311', 'py312']
-exclude = '''
-/(
-    \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
+target-version = "py38"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "N", "UP"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

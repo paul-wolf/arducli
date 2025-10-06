@@ -1,3 +1,7 @@
+# Arducli
+
+Arducli is a python script to let you get and set ardupilot parameters in a command console.
+
 We assume you have an ardupilot flight controller plugged into a USB port and this is recognised by your workstation.
 
 Create a virtual environment, source it and upgrade pip:
@@ -31,5 +35,3 @@ You have these commands from the cli:
 **quit**: exit the cli
 
 **set**: set the value of a parameter. This writes to the flight controller
-
-
