@@ -10,3 +10,4 @@ tqdm
 prompt_toolkit
 colorama
 rich
+textual>=0.47.0

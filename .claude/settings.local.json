@@ -5,7 +5,10 @@
       "Read(//Users/paul/prj/arduai/**)",
       "Bash(.venv/bin/ruff check . --fix)",
       "Bash(.venv/bin/ruff format:*)",
-      "Bash(.venv/bin/pre-commit run --all-files)"
+      "Bash(.venv/bin/pre-commit run --all-files)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(find:*)",
+      "Bash(echo \"Exit code: $?\")"
     ],
     "deny": [],
     "ask": []

@@ -16,11 +16,13 @@ arducli/
 │   ├── parameter_service.py   # Parameter operations
 │   └── mavlink_service.py     # Main MAVLink orchestration
 ├── interfaces/          # User interfaces
-│   └── cli_interface.py       # Command-line interface
+│   ├── cli_interface.py       # Command-line interface
+│   └── tui_interface.py       # Terminal UI (Textual)
 ├── constants/           # Constants and enumerations
 │   ├── mav.py          # MAVLink type definitions
 │   └── rc_option.py    # RC option constants
-└── main.py             # Application entry point
+├── main.py             # CLI entry point
+└── tui.py              # TUI entry point
 ```
 
 ## Features
@@ -28,8 +30,9 @@ arducli/
 - **Auto-discovery**: Automatically scans and connects to ArduPilot devices
 - **Connection Management**: Smart port detection with last-used port prioritization
 - **Parameter Operations**: Read, write, and search flight controller parameters
-- **Multiple Interfaces**: Extensible architecture supporting different UX approaches
+- **Multiple Interfaces**: CLI (command-line) and TUI (full-screen terminal UI)
 - **Cross-platform**: Works on Windows, macOS, and Linux
+- **Modern UI**: TUI built with Textual for rich terminal experience
 
 ## Installation
 
@@ -49,12 +52,17 @@ pip install -r requirements.txt
 
 ### Quick Start
 
-Run the CLI:
+**CLI Mode** (Command-line):
 ```bash
 python main.py
 ```
 
-The application will automatically scan for and connect to an ArduPilot device.
+**TUI Mode** (Full-screen terminal UI):
+```bash
+python tui.py
+```
+
+Both interfaces automatically scan for and connect to ArduPilot devices.
 
 ### CLI Commands
 
@@ -68,7 +76,22 @@ The application will automatically scan for and connect to an ArduPilot device.
 - **help** - Show available commands
 - **exit/quit** - Exit the application
 
-### Examples
+### TUI Features
+
+The Terminal UI provides a rich, interactive experience:
+
+- **Real-time Status**: Visual connection status indicator
+- **Parameter Table**: Sortable, searchable table with zebra striping
+- **Live Filtering**: Type to filter parameters (supports regex)
+- **Keyboard Shortcuts**:
+  - `q` - Quit application
+  - `c` - Connect to device
+  - `r` - Refresh parameters
+  - `s` - Focus search/filter input
+  - `Tab` - Navigate between widgets
+- **Mouse Support**: Click buttons and scroll through parameters
+
+### CLI Examples
 
 ```bash
 # Get a specific parameter
@@ -88,20 +111,24 @@ save my_params.txt
 
 ### Adding a New Interface
 
-Create a new interface in `interfaces/`:
+Create a new interface in `interfaces/`. The TUI is a great example:
 
 ```python
+from textual.app import App
 from services import MAVLinkService
 from models import ConnectionConfig
 
-class MyInterface:
+class MyInterface(App):
     def __init__(self, config: ConnectionConfig = None):
+        super().__init__()
         self.mavlink_service = MAVLinkService(config)
 
-    def run(self):
-        # Your interface logic
+    def compose(self):
+        # Your UI layout
         pass
 ```
+
+See `interfaces/tui_interface.py` for a complete example of building a full-screen terminal UI.
 
 ### Adding New Services
 

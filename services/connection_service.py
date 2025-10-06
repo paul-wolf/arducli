@@ -91,6 +91,9 @@ class ConnectionService:
                             port=port,
                         )
 
+                        # Request autopilot version info
+                        self._request_autopilot_version(connection)
+
                         self.save_last_used_port(port)
 
                         if on_progress:
@@ -158,3 +161,61 @@ class ConnectionService:
     def get_device_info(self) -> Optional[DeviceInfo]:
         """Get information about the connected device."""
         return self.device_info
+
+    def _request_autopilot_version(self, connection: mavutil.mavlink_connection) -> None:
+        """Request autopilot version information."""
+        try:
+            # Request autopilot version
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
+                0,  # confirmation
+                mavutil.mavlink.MAVLINK_MSG_ID_AUTOPILOT_VERSION,  # param1: message ID
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+
+            # Wait for response (non-blocking)
+            start_time = time.time()
+            while time.time() - start_time < 2:  # 2 second timeout
+                msg = connection.recv_match(type="AUTOPILOT_VERSION", blocking=False, timeout=0.1)
+                if msg:
+                    self._parse_autopilot_version(msg)
+                    break
+        except Exception:
+            # Non-critical, continue without version info
+            pass
+
+    def _parse_autopilot_version(self, msg) -> None:
+        """Parse autopilot version message."""
+        if not self.device_info:
+            return
+
+        try:
+            # Extract version numbers
+            major = (msg.flight_sw_version >> 24) & 0xFF
+            minor = (msg.flight_sw_version >> 16) & 0xFF
+            patch = (msg.flight_sw_version >> 8) & 0xFF
+            fw_type = msg.flight_sw_version & 0xFF
+
+            # Version type suffix
+            fw_type_str = {0: "", 64: "-dev", 128: "-alpha", 192: "-beta", 255: "-rc"}.get(fw_type, "")
+
+            self.device_info.firmware_version = f"{major}.{minor}.{patch}{fw_type_str}"
+
+            # Board version if available
+            if msg.board_version > 0:
+                self.device_info.hardware_version = f"{msg.board_version}"
+
+            # Product ID can indicate board type
+            if msg.product_id > 0:
+                self.device_info.board_type = f"ID:{msg.product_id}"
+
+        except Exception:
+            # If parsing fails, just skip
+            pass
