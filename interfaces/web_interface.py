@@ -24,6 +24,10 @@ class WebInterface:
         self._filter_text: str = ""
         self._connecting: bool = False
         self._loading_params: bool = False
+        self._reboot_needed: bool = False
+        self._raw_filter: str = ""
+        self._raw_prev: dict = {}  # {type.field: last_seen_value}
+        self._raw_changed: dict = {}  # {type.field: changed_at timestamp}
         # UI refs
         self._status_label = None
         self._param_table = None
@@ -33,6 +37,8 @@ class WebInterface:
         self._recent_accessed_col = None
         self._recent_modified_col = None
         self._connect_btn = None
+        self._reboot_btn = None
+        self._raw_table = None
         self._message_log = None
         self._params_msg_log = None
         self._telemetry = {}
@@ -69,6 +75,9 @@ class WebInterface:
             )
             ui.button("Disconnect", on_click=self._do_disconnect).props("color=negative dense outline")
             ui.button("Load Params", on_click=self._load_parameters).props("color=secondary dense")
+            self._reboot_btn = ui.button("Reboot FC", on_click=self._confirm_reboot).props(
+                "color=warning dense outline"
+            )
 
         # Always-visible status strip
         sb = self._statusbar
@@ -96,6 +105,7 @@ class WebInterface:
             t_params = ui.tab("Parameters", icon="tune")
             t_status = ui.tab("Status", icon="speed")
             t_messages = ui.tab("Messages", icon="message")
+            t_raw = ui.tab("Raw MAVLink", icon="data_object")
 
         with ui.tab_panels(tabs, value=t_params).classes("w-full bg-gray-900").style("flex: 1; overflow: hidden;"):
             with ui.tab_panel(t_params).classes("p-2"):
@@ -104,9 +114,12 @@ class WebInterface:
                 self._build_status_panel()
             with ui.tab_panel(t_messages).classes("p-2"):
                 self._build_messages_panel()
+            with ui.tab_panel(t_raw).classes("p-2"):
+                self._build_raw_panel()
 
         ui.timer(0.5, self._tick_telemetry)
         ui.timer(1.0, self._tick_messages)
+        ui.timer(1.0, self._tick_raw)
 
     # ── Parameters panel ──────────────────────────────────────────────────────
 
@@ -199,27 +212,129 @@ class WebInterface:
 
     def _build_status_panel(self):
         t = self._telemetry
-        with ui.grid(columns=2).classes("w-full gap-4"):
-            with ui.card().classes("bg-gray-800 text-white"):
-                ui.label("GPS").classes("font-bold text-blue-300 mb-2")
-                t["gps_status"] = ui.label("Status: —").classes("font-mono text-sm")
-                t["gps_lat"] = ui.label("Lat: —").classes("font-mono text-sm")
-                t["gps_lon"] = ui.label("Lon: —").classes("font-mono text-sm")
-                t["gps_alt"] = ui.label("Alt: —").classes("font-mono text-sm")
-            with ui.card().classes("bg-gray-800 text-white"):
-                ui.label("Battery").classes("font-bold text-green-300 mb-2")
-                t["bat_v"] = ui.label("Voltage: —").classes("font-mono text-sm")
-                t["bat_a"] = ui.label("Current: —").classes("font-mono text-sm")
-                t["bat_pct"] = ui.label("Remaining: —").classes("font-mono text-sm")
-            with ui.card().classes("bg-gray-800 text-white"):
-                ui.label("Attitude").classes("font-bold text-purple-300 mb-2")
-                t["heading"] = ui.label("Heading: —").classes("font-mono text-sm")
-                t["roll"] = ui.label("Roll: —").classes("font-mono text-sm")
-                t["pitch"] = ui.label("Pitch: —").classes("font-mono text-sm")
-            with ui.card().classes("bg-gray-800 text-white"):
-                ui.label("System").classes("font-bold text-orange-300 mb-2")
-                t["mode"] = ui.label("Mode: —").classes("font-mono text-sm")
-                t["armed"] = ui.label("State: DISARMED").classes("font-mono text-sm text-green-400")
+        card = "bg-gray-800 text-white"
+        lbl = "font-mono text-sm"
+
+        def hdr(text, color):
+            ui.label(text).classes(f"font-bold {color} mb-1 text-xs uppercase tracking-wide")
+
+        with ui.grid(columns=3).classes("w-full gap-3"):
+            # ── GPS ──────────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("GPS", "text-blue-300")
+                t["gps_status"] = ui.label("Status: —").classes(lbl)
+                t["gps_lat"] = ui.label("Lat:  —").classes(lbl)
+                t["gps_lon"] = ui.label("Lon:  —").classes(lbl)
+                t["gps_alt"] = ui.label("Alt (MSL): —").classes(lbl)
+                t["rel_alt"] = ui.label("Alt (Rel): —").classes(lbl)
+                t["gps_hdop"] = ui.label("HDOP: —").classes(lbl)
+                t["gps_vdop"] = ui.label("VDOP: —").classes(lbl)
+
+            # ── Battery ───────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("Battery", "text-green-300")
+                t["bat_v"] = ui.label("Voltage:   —").classes(lbl)
+                t["bat_a"] = ui.label("Current:   —").classes(lbl)
+                t["bat_pct"] = ui.label("Remaining: —").classes(lbl)
+
+            # ── System ────────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("System", "text-orange-300")
+                t["armed"] = ui.label("State: DISARMED").classes(f"{lbl} text-green-400")
+                t["mode"] = ui.label("Mode: —").classes(lbl)
+                t["throttle"] = ui.label("Throttle: —").classes(lbl)
+
+            # ── Speed & Altitude ──────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("Speed & Altitude", "text-cyan-300")
+                t["airspeed"] = ui.label("Airspeed:   —").classes(lbl)
+                t["groundspeed"] = ui.label("Groundspeed:—").classes(lbl)
+                t["climb_rate"] = ui.label("Climb rate: —").classes(lbl)
+                t["alt_vfr"] = ui.label("Alt (baro): —").classes(lbl)
+
+            # ── Attitude ──────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("Attitude", "text-purple-300")
+                t["heading"] = ui.label("Heading:  —").classes(lbl)
+                t["roll"] = ui.label("Roll:     —").classes(lbl)
+                t["pitch"] = ui.label("Pitch:    —").classes(lbl)
+                t["yaw_rate"] = ui.label("Yaw rate: —").classes(lbl)
+                t["wind"] = ui.label("Wind:     —").classes(lbl)
+
+            # ── EKF ───────────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("EKF", "text-yellow-300")
+                t["ekf_ok"] = ui.label("Status: —").classes(lbl)
+                t["ekf_vel"] = ui.label("Vel var:      —").classes(lbl)
+                t["ekf_pos_h"] = ui.label("Pos horiz:    —").classes(lbl)
+                t["ekf_pos_v"] = ui.label("Pos vert:     —").classes(lbl)
+                t["ekf_compass"] = ui.label("Compass var:  —").classes(lbl)
+                t["ekf_terrain"] = ui.label("Terrain var:  —").classes(lbl)
+
+            # ── Vibration ─────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("Vibration", "text-red-300")
+                t["vib_x"] = ui.label("X: —").classes(lbl)
+                t["vib_y"] = ui.label("Y: —").classes(lbl)
+                t["vib_z"] = ui.label("Z: —").classes(lbl)
+                t["vib_clip"] = ui.label("Clipping: —").classes(lbl)
+
+            # ── RC / Link ─────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("RC / Link", "text-pink-300")
+                t["rssi"] = ui.label("RSSI: —").classes(lbl)
+
+            # ── Compass ───────────────────────────────────────────────────────
+            with ui.card().classes(card):
+                hdr("Compass", "text-indigo-300")
+                t["mag_field"] = ui.label("Field strength: —").classes(lbl)
+
+    # ── Raw MAVLink panel ─────────────────────────────────────────────────────
+
+    def _build_raw_panel(self):
+        with ui.row().classes("w-full items-center gap-2 mb-2"):
+            ui.input(
+                "Filter  (type name, field name, or value — regex ok)",
+                on_change=lambda e: self._on_raw_filter_change(e.value),
+            ).classes("flex-grow font-mono").props("clearable dense outlined dark")
+            self._raw_msg_count = ui.label("").classes("text-gray-400 text-xs font-mono")
+
+        cols = [
+            {
+                "name": "type",
+                "label": "Message Type",
+                "field": "type",
+                "sortable": True,
+                "align": "left",
+                "style": "width: 200px; font-weight: bold;",
+            },
+            {
+                "name": "field",
+                "label": "Field",
+                "field": "field",
+                "sortable": True,
+                "align": "left",
+                "style": "width: 200px;",
+            },
+            {"name": "value", "label": "Value", "field": "value", "sortable": False, "align": "left"},
+            {
+                "name": "age",
+                "label": "Age",
+                "field": "age",
+                "sortable": True,
+                "align": "right",
+                "style": "width: 80px;",
+            },
+        ]
+        self._raw_table = (
+            ui.table(columns=cols, rows=[], row_key="key")
+            .classes("w-full font-mono text-sm")
+            .props("dense dark virtual-scroll")
+            .style("height: calc(100vh - 175px);")
+        )
+
+    def _on_raw_filter_change(self, value: str):
+        self._raw_filter = value or ""
 
     # ── Messages panel ────────────────────────────────────────────────────────
 
@@ -474,6 +589,11 @@ class WebInterface:
             self._redraw_recent(self._recent_modified_col, self._recently_modified, modified=True)
 
             if self._selected_meta and self._selected_meta.reboot_required:
+                self._reboot_needed = True
+                if self._reboot_btn:
+                    self._reboot_btn.props("color=negative")
+                    self._reboot_btn.props(remove="outline")
+                    self._reboot_btn.update()
                 ui.notify(
                     f"{self._selected_param} = {new_val}  —  reboot required",
                     type="warning",
@@ -494,6 +614,40 @@ class WebInterface:
                     ui.label(f"  {old} → {new}").classes("font-mono text-xs text-gray-400")
                 else:
                     ui.label(f"{name}  {val}").classes("font-mono text-xs text-gray-300")
+
+    async def _confirm_reboot(self):
+        if not self.service.is_connected():
+            ui.notify("Not connected", type="negative")
+            return
+        with ui.dialog() as dialog, ui.card().classes("bg-gray-800 text-white"):
+            ui.label("Reboot Flight Controller?").classes("text-lg font-bold mb-2")
+            ui.label("This will restart the FC. Any unsaved configuration will be lost.").classes(
+                "text-gray-300 text-sm mb-4"
+            )
+            with ui.row().classes("gap-2 justify-end w-full"):
+                ui.button("Cancel", on_click=dialog.close).props("flat color=grey")
+                ui.button("Reboot", on_click=lambda: self._do_reboot(dialog)).props("color=warning")
+        dialog.open()
+
+    async def _do_reboot(self, dialog):
+        dialog.close()
+        ok = await asyncio.to_thread(self.service.reboot)
+        if ok:
+            self._reboot_needed = False
+            if self._reboot_btn:
+                self._reboot_btn.props(remove="color=negative")
+                self._reboot_btn.props("color=warning outline")
+                self._reboot_btn.update()
+            ui.notify("Reboot command sent — waiting for FC to restart…", type="positive", timeout=8000)
+            # Give the FC time to shut down and reboot, then re-request telemetry streams.
+            # The serial connection usually survives the cycle; the FC just resets its MAVLink state.
+            await asyncio.sleep(6)
+            if self.service.is_connected():
+                self.service.telemetry_service._stream_requested = False
+                await asyncio.to_thread(self.service.start_telemetry)
+                ui.notify("Telemetry streams re-established", type="info", timeout=3000)
+        else:
+            ui.notify("Failed to send reboot command", type="negative")
 
     def _mark_disconnected(self, reason: str = ""):
         """Clean up after an unexpected device disconnect. Safe to call multiple times."""
@@ -547,34 +701,84 @@ class WebInterface:
 
             t = self._telemetry
             if t:
-                t["gps_status"].set_text(f"Status: {self.service.get_gps_status()}")
-                t["gps_status"].update()
-                t["gps_lat"].set_text(f"Lat:  {td.gps_lat:.6f}°")
-                t["gps_lat"].update()
-                t["gps_lon"].set_text(f"Lon:  {td.gps_lon:.6f}°")
-                t["gps_lon"].update()
-                t["gps_alt"].set_text(f"Alt:  {td.gps_alt:.1f} m")
-                t["gps_alt"].update()
-                t["bat_v"].set_text(f"Voltage:    {td.battery_voltage:.2f} V")
-                t["bat_v"].update()
-                t["bat_a"].set_text(f"Current:    {td.battery_current:.1f} A")
-                t["bat_a"].update()
-                t["bat_pct"].set_text(f"Remaining:  {td.battery_remaining}%")
-                t["bat_pct"].update()
-                t["heading"].set_text(f"Heading:  {td.heading:.0f}°")
-                t["heading"].update()
-                t["roll"].set_text(f"Roll:     {td.roll:+.1f}°")
-                t["roll"].update()
-                t["pitch"].set_text(f"Pitch:    {td.pitch:+.1f}°")
-                t["pitch"].update()
-                t["mode"].set_text(f"Mode: {td.mode}")
-                t["mode"].update()
+
+                def upd(key, text):
+                    t[key].set_text(text)
+                    t[key].update()
+
+                # GPS
+                upd("gps_status", f"Status: {self.service.get_gps_status()}")
+                upd("gps_lat", f"Lat:       {td.gps_lat:.6f}°")
+                upd("gps_lon", f"Lon:       {td.gps_lon:.6f}°")
+                upd("gps_alt", f"Alt (MSL): {td.gps_alt:.1f} m")
+                upd("rel_alt", f"Alt (Rel): {td.rel_alt:.1f} m")
+                upd("gps_hdop", f"HDOP:      {td.gps_hdop:.2f}")
+                upd("gps_vdop", f"VDOP:      {td.gps_vdop:.2f}")
+
+                # Battery
+                upd("bat_v", f"Voltage:   {td.battery_voltage:.2f} V")
+                upd("bat_a", f"Current:   {td.battery_current:.1f} A")
+                upd("bat_pct", f"Remaining: {td.battery_remaining}%")
+
+                # System
+                upd("mode", f"Mode: {td.mode}")
+                upd("throttle", f"Throttle: {td.throttle}%")
                 if td.armed:
                     t["armed"].set_text("State: ARMED")
                     t["armed"].classes("text-red-400", remove="text-green-400")
                 else:
                     t["armed"].set_text("State: DISARMED")
                     t["armed"].classes("text-green-400", remove="text-red-400")
+
+                # Speed & altitude
+                upd("airspeed", f"Airspeed:    {td.airspeed:.1f} m/s")
+                upd("groundspeed", f"Groundspeed: {td.groundspeed:.1f} m/s")
+                climb_arrow = "▲" if td.climb_rate >= 0 else "▼"
+                upd("climb_rate", f"Climb rate:  {climb_arrow}{abs(td.climb_rate):.1f} m/s")
+                upd("alt_vfr", f"Alt (baro):  {td.alt_vfr:.1f} m")
+
+                # Attitude
+                upd("heading", f"Heading:  {td.heading:.0f}°")
+                upd("roll", f"Roll:     {td.roll:+.1f}°")
+                upd("pitch", f"Pitch:    {td.pitch:+.1f}°")
+                upd("yaw_rate", f"Yaw rate: {td.yaw_rate:+.1f}°/s")
+                if td.wind_speed > 0:
+                    upd("wind", f"Wind:     {td.wind_speed:.1f} m/s @ {td.wind_dir:.0f}°")
+                else:
+                    upd("wind", "Wind:     —")
+
+                # EKF
+                ekf_str = "OK" if td.ekf_ok else "WARN"
+                ekf_color = "text-green-400" if td.ekf_ok else "text-yellow-400"
+                t["ekf_ok"].set_text(f"Status: {ekf_str}")
+                t["ekf_ok"].classes(ekf_color, remove="text-green-400 text-yellow-400")
+                upd("ekf_vel", f"Vel var:      {td.ekf_vel_variance:.3f}")
+                upd("ekf_pos_h", f"Pos horiz:    {td.ekf_pos_horiz_variance:.3f}")
+                upd("ekf_pos_v", f"Pos vert:     {td.ekf_pos_vert_variance:.3f}")
+                upd("ekf_compass", f"Compass var:  {td.ekf_compass_variance:.3f}")
+                upd("ekf_terrain", f"Terrain var:  {td.ekf_terrain_variance:.3f}")
+
+                # Vibration
+                def vib_color(v):
+                    return "text-green-400" if v < 30 else ("text-yellow-400" if v < 60 else "text-red-400")
+
+                for axis, val in [("vib_x", td.vib_x), ("vib_y", td.vib_y), ("vib_z", td.vib_z)]:
+                    ax = axis[-1].upper()
+                    t[axis].set_text(f"{ax}: {val:.1f}")
+                    t[axis].classes(vib_color(val), remove="text-green-400 text-yellow-400 text-red-400")
+                clip_color = "text-red-400" if td.vib_clip > 0 else "text-green-400"
+                t["vib_clip"].set_text(f"Clipping: {td.vib_clip}")
+                t["vib_clip"].classes(clip_color, remove="text-green-400 text-red-400")
+
+                # RC / Link
+                if td.rssi == 255:
+                    upd("rssi", "RSSI: —")
+                else:
+                    rssi_pct = round(td.rssi / 254 * 100)
+                    upd("rssi", f"RSSI: {td.rssi}  ({rssi_pct}%)")
+
+                # Compass
+                upd("mag_field", f"Field strength: {td.mag_field_strength:.0f} mG")
         except Exception as e:
             self._mark_disconnected(str(e))
 
@@ -591,5 +795,70 @@ class WebInterface:
                     if self._params_msg_log:
                         self._params_msg_log.push(line)
                 self._seen_message_count = len(msgs)
+        except Exception:
+            pass
+
+    def _tick_raw(self):
+        if not self.service.is_connected() or self._raw_table is None:
+            return
+        try:
+            import time as _time
+
+            now = _time.time()
+            raw = self.service.get_raw_mavlink()
+            query = self._raw_filter.strip()
+
+            # Build filter predicate
+            if query:
+                try:
+                    pat = re.compile(query, re.IGNORECASE)
+
+                    def match(t, f, v):
+                        return pat.search(t) or pat.search(f) or pat.search(str(v))
+                except re.error:
+                    ql = query.lower()
+
+                    def match(t, f, v):
+                        return ql in t.lower() or ql in f.lower() or ql in str(v).lower()
+            else:
+
+                def match(t, f, v):
+                    return True
+
+            rows = []
+            for msg_type, (fields, ts) in sorted(raw.items()):
+                age = now - ts
+                age_str = f"{age:.1f}s" if age < 60 else f"{age/60:.0f}m"
+                first = True
+                for field, value in sorted(fields.items()):
+                    val_str = str(value)
+                    if not match(msg_type, field, val_str):
+                        continue
+                    key = f"{msg_type}.{field}"
+                    prev = self._raw_prev.get(key)
+                    if prev != val_str:
+                        self._raw_changed[key] = now
+                        self._raw_prev[key] = val_str
+                    changed_recently = (now - self._raw_changed.get(key, 0)) < 2.0
+                    display_val = f"● {val_str}" if changed_recently else val_str
+                    rows.append(
+                        {
+                            "key": key,
+                            "type": msg_type if first else "",
+                            "field": field,
+                            "value": display_val,
+                            "age": age_str if first else "",
+                        }
+                    )
+                    first = False
+
+            self._raw_table.rows = rows
+            self._raw_table.update()
+
+            # Update message count label
+            n_types = len([r for r in rows if r["type"]])
+            n_fields = len(rows)
+            self._raw_msg_count.set_text(f"{n_types} message types  ·  {n_fields} fields")
+            self._raw_msg_count.update()
         except Exception:
             pass

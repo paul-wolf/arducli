@@ -1,5 +1,7 @@
 from typing import Callable, Dict, Optional
 
+from pymavlink import mavutil
+
 from models import ConnectionConfig, DeviceInfo
 
 from .connection_service import ConnectionService
@@ -143,7 +145,34 @@ class MAVLinkService:
         """Get recent messages."""
         return self.telemetry_service.get_messages(limit)
 
+    def get_raw_mavlink(self) -> dict:
+        """Return raw MAVLink snapshot: {msg_type: (fields_dict, timestamp)}."""
+        return self.telemetry_service._raw
+
     # Command methods
+
+    def reboot(self) -> bool:
+        """Send MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN to reboot the autopilot."""
+        if not self.is_connected():
+            raise RuntimeError("Not connected to a device")
+        connection = self.connection_service.get_connection()
+        try:
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                mavutil.mavlink.MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+                0,  # confirmation
+                1,  # param1: 1 = reboot autopilot
+                0,  # param2: 0 = leave companion computer alone
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            return True
+        except Exception:
+            return False
 
     def motor_test(self, motor_number: int, throttle_percent: int, duration_sec: float = 2.0) -> bool:
         """
