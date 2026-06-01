@@ -487,6 +487,8 @@ class WebInterface:
             self._param_table.rows = self._param_rows.copy()
             self._param_table.update()
             ui.notify(f"Loaded {len(params)} parameters", type="positive")
+            # Drain accumulated messages into _raw now that the serial port is free again.
+            await asyncio.to_thread(self._drain_telemetry)
         except Exception as e:
             self._mark_disconnected(str(e))
         finally:
@@ -649,18 +651,30 @@ class WebInterface:
         else:
             ui.notify("Failed to send reboot command", type="negative")
 
+    def _drain_telemetry(self):
+        """Non-blocking drain of the pymavlink buffer — call after parameter load to populate _raw."""
+        for _ in range(20):
+            try:
+                if not self.service.update_telemetry():
+                    break
+            except Exception:
+                break
+
     def _mark_disconnected(self, reason: str = ""):
         """Clean up after an unexpected device disconnect. Safe to call multiple times."""
         if not self.service.is_connected():
             return  # already handled
         self.service.disconnect()
-        if self._status_label:
-            self._status_label.set_text("● Not connected")
-            self._status_label.update()
-            self._status_label.classes("text-red-400", remove="text-green-400")
         msg = f"Device disconnected: {reason}" if reason else "Device disconnected"
-        ui.notify(msg, type="warning")
         print(f"[disconnect] {msg}")
+        try:
+            if self._status_label:
+                self._status_label.set_text("● Not connected")
+                self._status_label.update()
+                self._status_label.classes("text-red-400", remove="text-green-400")
+            ui.notify(msg, type="warning")
+        except Exception:
+            pass  # page context gone (e.g. hot-reload fired mid-operation)
 
     def _clear_messages(self):
         if self._message_log:
