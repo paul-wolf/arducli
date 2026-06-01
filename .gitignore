@@ -23,3 +23,7 @@ doc/*.fld
 coverage.xml
 .ipynb_checkpoints
 *.ipynb
+
+# Emacs auto-save and lock files
+\#*\#
+.#*

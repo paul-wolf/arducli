@@ -8,7 +8,9 @@
       "Bash(.venv/bin/pre-commit run --all-files)",
       "Bash(.venv/bin/python:*)",
       "Bash(find:*)",
-      "Bash(echo \"Exit code: $?\")"
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/pip install *)"
     ],
     "deny": [],
     "ask": []

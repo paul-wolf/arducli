@@ -11,3 +11,5 @@ prompt_toolkit
 colorama
 rich
 textual>=0.47.0
+nicegui>=1.4
+requests
