@@ -223,3 +223,136 @@ class MAVLinkService:
             return True
         except Exception:
             return False
+
+    def start_compass_calibration(self, autosave: bool = True) -> bool:
+        """
+        Start compass calibration.
+
+        Args:
+            autosave: Automatically save calibration on completion
+
+        Returns:
+            True if command was sent successfully
+
+        Raises:
+            RuntimeError: If not connected
+        """
+        if not self.is_connected():
+            raise RuntimeError("Not connected to a device")
+
+        connection = self.connection_service.get_connection()
+
+        try:
+            # MAV_CMD_DO_START_MAG_CAL (42424)
+            # param1: mag_mask (0 = all magnetometers)
+            # param2: retry (0 = no retry, 1 = retry if fails)
+            # param3: autosave (0 = no, 1 = yes)
+            # param4: delay (0 = no delay)
+            # param5: autoreboot (0 = no)
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                42424,  # MAV_CMD_DO_START_MAG_CAL
+                0,  # confirmation
+                0,  # param1: all magnetometers
+                0,  # param2: no retry
+                1 if autosave else 0,  # param3: autosave
+                0,  # param4: no delay
+                0,  # param5: no autoreboot
+                0,  # param6
+                0,  # param7
+            )
+            return True
+        except Exception:
+            return False
+
+    def cancel_compass_calibration(self) -> bool:
+        """
+        Cancel compass calibration.
+
+        Returns:
+            True if command was sent successfully
+
+        Raises:
+            RuntimeError: If not connected
+        """
+        if not self.is_connected():
+            raise RuntimeError("Not connected to a device")
+
+        connection = self.connection_service.get_connection()
+
+        try:
+            # MAV_CMD_DO_CANCEL_MAG_CAL (42425)
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                42425,  # MAV_CMD_DO_CANCEL_MAG_CAL
+                0,  # confirmation
+                0,  # param1: all magnetometers
+                0,  # param2-7: unused
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            return True
+        except Exception:
+            return False
+
+    def accept_compass_calibration(self) -> bool:
+        """
+        Accept compass calibration results.
+
+        Returns:
+            True if command was sent successfully
+
+        Raises:
+            RuntimeError: If not connected
+        """
+        if not self.is_connected():
+            raise RuntimeError("Not connected to a device")
+
+        connection = self.connection_service.get_connection()
+
+        try:
+            # MAV_CMD_DO_ACCEPT_MAG_CAL (42426)
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                42426,  # MAV_CMD_DO_ACCEPT_MAG_CAL
+                0,  # confirmation
+                0,  # param1: all magnetometers
+                0,  # param2-7: unused
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            return True
+        except Exception:
+            return False
+
+    def get_compass_offsets(self) -> dict:
+        """
+        Get compass offset parameters to check if calibration has been done.
+
+        Returns:
+            Dictionary of compass offset parameters
+        """
+        offsets = {}
+        try:
+            # Check compass 1 offsets
+            offsets["COMPASS_OFS_X"] = self.get_parameter("COMPASS_OFS_X")
+            offsets["COMPASS_OFS_Y"] = self.get_parameter("COMPASS_OFS_Y")
+            offsets["COMPASS_OFS_Z"] = self.get_parameter("COMPASS_OFS_Z")
+
+            # Check if calibrated (offsets should not be 0,0,0)
+            offsets["calibrated"] = not (
+                offsets["COMPASS_OFS_X"] == 0 and offsets["COMPASS_OFS_Y"] == 0 and offsets["COMPASS_OFS_Z"] == 0
+            )
+        except Exception:
+            pass
+
+        return offsets

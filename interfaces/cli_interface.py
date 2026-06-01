@@ -204,6 +204,118 @@ class CLIInterface(cmd.Cmd):
         """Exit the CLI."""
         return self.do_exit(arg)
 
+    def do_motor_test(self, arg):
+        """
+        Test a motor.
+        Usage: motor_test <motor_number> <throttle_%> [duration_sec]
+               motor_test all <throttle_%> [duration_sec]
+        Example: motor_test 1 10 2
+        """
+        if not self.mavlink_service.is_connected():
+            console.print("[yellow]Not connected[/yellow]")
+            return
+
+        args = arg.split()
+        if len(args) < 2:
+            console.print("[red]Usage: motor_test <motor_number|all> <throttle_%> [duration][/red]")
+            return
+
+        motor_arg = args[0].lower()
+        try:
+            throttle = int(args[1])
+            duration = float(args[2]) if len(args) > 2 else 2.0
+        except ValueError:
+            console.print("[red]Invalid throttle or duration value[/red]")
+            return
+
+        if throttle < 1 or throttle > 100:
+            console.print("[red]Throttle must be 1-100%[/red]")
+            return
+
+        if duration < 0.5 or duration > 10:
+            console.print("[red]Duration must be 0.5-10 seconds[/red]")
+            return
+
+        console.print("[bold red]⚠️  WARNING: Remove propellers before testing![/bold red]")
+
+        if motor_arg == "all":
+            success = self.mavlink_service.test_all_motors(throttle, duration)
+            msg = f"Testing all motors at {throttle}% for {duration}s"
+        else:
+            try:
+                motor = int(motor_arg)
+                if motor < 1 or motor > 8:
+                    console.print("[red]Motor number must be 1-8[/red]")
+                    return
+                success = self.mavlink_service.motor_test(motor, throttle, duration)
+                msg = f"Testing motor {motor} at {throttle}% for {duration}s"
+            except ValueError:
+                console.print("[red]Invalid motor number[/red]")
+                return
+
+        if success:
+            console.print(f"[yellow]{msg}[/yellow]")
+        else:
+            console.print("[red]Failed to send motor test command[/red]")
+
+    def do_compass_health(self, arg):
+        """Check compass calibration status and health."""
+        if not self.mavlink_service.is_connected():
+            console.print("[yellow]Not connected[/yellow]")
+            return
+
+        console.print("[cyan]Checking compass health...[/cyan]")
+
+        # Get compass offsets
+        offsets = self.mavlink_service.get_compass_offsets()
+
+        # Check if calibrated
+        if offsets.get("calibrated"):
+            console.print("[green]✓ Compass is calibrated[/green]")
+            console.print(
+                f"  Offsets: X={offsets.get('COMPASS_OFS_X', 0):.0f} "
+                f"Y={offsets.get('COMPASS_OFS_Y', 0):.0f} "
+                f"Z={offsets.get('COMPASS_OFS_Z', 0):.0f}"
+            )
+        else:
+            console.print("[red]✗ Compass NOT calibrated (offsets are 0,0,0)[/red]")
+
+        # Magnetic field strength
+        telem = self.mavlink_service.get_telemetry()
+        mag_field = telem.mag_field_strength
+        if mag_field > 0:
+            if 200 < mag_field < 700:
+                console.print(f"[green]✓ Mag field: {mag_field:.0f} mG (normal)[/green]")
+            else:
+                console.print(f"[yellow]⚠️  Mag field: {mag_field:.0f} mG (check for interference)[/yellow]")
+        else:
+            console.print("[yellow]⚠️  Mag field: No data available[/yellow]")
+
+    def do_compass_cal(self, arg):
+        """
+        Start or cancel compass calibration.
+        Usage: compass_cal start  - Start calibration
+               compass_cal cancel - Cancel calibration
+        """
+        if not self.mavlink_service.is_connected():
+            console.print("[yellow]Not connected[/yellow]")
+            return
+
+        cmd = arg.strip().lower()
+        if cmd == "start":
+            if self.mavlink_service.start_compass_calibration(autosave=True):
+                console.print("[cyan]🧭 Compass calibration started[/cyan]")
+                console.print("[yellow]Rotate vehicle in all orientations...[/yellow]")
+            else:
+                console.print("[red]Failed to start compass calibration[/red]")
+        elif cmd == "cancel":
+            if self.mavlink_service.cancel_compass_calibration():
+                console.print("[yellow]Compass calibration cancelled[/yellow]")
+            else:
+                console.print("[red]Failed to cancel compass calibration[/red]")
+        else:
+            console.print("[red]Usage: compass_cal start|cancel[/red]")
+
     def cmdloop(self, intro=None):
         """Main command loop with auto-connect."""
         console.print(self.intro)

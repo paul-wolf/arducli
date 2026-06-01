@@ -34,6 +34,11 @@ class TelemetryData:
     armed: bool = False
     mode: str = "UNKNOWN"
 
+    # Compass
+    compass_healthy: bool = False
+    compass_variance: float = 0.0
+    mag_field_strength: float = 0.0  # milligauss
+
 
 class TelemetryService:
     """Service for handling telemetry data from MAVLink."""
@@ -129,6 +134,35 @@ class TelemetryService:
                 text = msg.text.decode("utf-8") if isinstance(msg.text, bytes) else msg.text
                 self._messages.append((severity, text))
                 updated = True
+
+            elif msg_type == "RAW_IMU":
+                # Get magnetometer readings
+                try:
+                    import math
+
+                    # Calculate magnetic field strength (milligauss)
+                    mag_x = msg.xmag
+                    mag_y = msg.ymag
+                    mag_z = msg.zmag
+                    self.data.mag_field_strength = math.sqrt(mag_x**2 + mag_y**2 + mag_z**2)
+                    updated = True
+                except Exception:
+                    # If RAW_IMU doesn't have mag data, skip
+                    pass
+
+            elif msg_type == "MAG_CAL_REPORT":
+                # Compass calibration report
+                # fitness is the quality metric (lower is better, < 200 is good)
+                # We can use this to assess calibration quality
+                try:
+                    if hasattr(msg, "fitness"):
+                        # Good calibration: fitness < 200
+                        # Acceptable: 200-400
+                        # Poor: > 400
+                        self.data.compass_healthy = msg.fitness < 400
+                    updated = True
+                except Exception:
+                    pass
 
             msg = connection.recv_match(blocking=False)
 

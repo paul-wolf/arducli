@@ -123,21 +123,16 @@ class TelemetryDisplay(Static):
 
         horizon = self._draw_artificial_horizon(roll, pitch)
 
+        # Two column layout: horizon | data
         text = f"""[bold]TELEMETRY[/bold]
 
-[bold]Attitude:[/bold]
-{horizon}
-R:{roll:+5.1f}° P:{pitch:+5.1f}°
+{horizon}  HDG: {heading:.0f}°
+R:{roll:+5.1f}°      GPS: {gps_status}
+P:{pitch:+5.1f}°
+           BAT: {battery_voltage:.1f}V {battery_current:.1f}A ({battery_remaining}%)
 
-[bold]Heading:[/bold] {heading:.1f}°
-
-[bold]GPS:[/bold] {gps_status}
-
-[bold]Battery:[/bold]
-  {battery_voltage:.1f}V {battery_current:.1f}A ({battery_remaining}%)
-
-[bold]Mode:[/bold] {mode}
-[bold]Status:[/bold] [{armed_color}]{armed_status}[/{armed_color}]
+           MODE: {mode}
+           [{armed_color}]{armed_status}[/{armed_color}]
 """
         self.update(text)
 
@@ -175,7 +170,7 @@ class MessageDisplay(VerticalScroll):
             log.write(f"[{color}][{severity}][/{color}] {text}")
 
 
-class CommandPanel(Static):
+class CommandPanel(VerticalScroll):
     """Widget for testing commands."""
 
     def __init__(self, mavlink_service: MAVLinkService, **kwargs):
@@ -184,6 +179,11 @@ class CommandPanel(Static):
 
     def compose(self) -> ComposeResult:
         """Compose the command panel."""
+        yield Label("[bold]TEST RESULTS[/bold]")
+        with Container(id="test-log-container"):
+            yield RichLog(id="test-log", highlight=True, markup=True)
+
+        yield Label("")  # Spacer
         yield Label("[bold]MOTOR TEST[/bold]")
         yield Label("⚠️  Remove props first!")
 
@@ -205,15 +205,36 @@ class CommandPanel(Static):
 
         yield Button("Run Motor Test", id="btn-motor-test", variant="warning")
 
+        yield Label("")  # Spacer
+        yield Label("[bold]COMPASS TEST[/bold]")
+        with Horizontal():
+            yield Button("Check Health", id="btn-compass-check", variant="primary")
+            yield Button("Start Cal", id="btn-compass-start", variant="success")
+            yield Button("Cancel", id="btn-compass-cancel", variant="error")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "btn-motor-test":
             self.run_motor_test()
+        elif event.button.id == "btn-compass-check":
+            self.check_compass_health()
+        elif event.button.id == "btn-compass-start":
+            self.start_compass_calibration()
+        elif event.button.id == "btn-compass-cancel":
+            self.cancel_compass_calibration()
+
+    def log_test_result(self, message: str, color: str = "white"):
+        """Log a test result to the test log."""
+        try:
+            test_log = self.query_one("#test-log", RichLog)
+            test_log.write(f"[{color}]{message}[/{color}]")
+        except Exception:
+            pass
 
     def run_motor_test(self):
         """Execute motor test."""
         if not self.mavlink_service.is_connected():
-            self.notify("Not connected", severity="error")
+            self.log_test_result("❌ Motor test failed: Not connected", "red")
             return
 
         try:
@@ -228,11 +249,11 @@ class CommandPanel(Static):
 
             # Validate
             if throttle < 1 or throttle > 100:
-                self.notify("Throttle must be 1-100%", severity="error")
+                self.log_test_result("❌ Throttle must be 1-100%", "red")
                 return
 
             if duration < 0.5 or duration > 10:
-                self.notify("Duration must be 0.5-10 seconds", severity="error")
+                self.log_test_result("❌ Duration must be 0.5-10 seconds", "red")
                 return
 
             # Execute
@@ -244,14 +265,85 @@ class CommandPanel(Static):
                 msg = f"Testing motor {motor} at {throttle}% for {duration}s"
 
             if success:
-                self.notify(msg, severity="warning")
+                self.log_test_result(f"⚠️  {msg}", "yellow")
             else:
-                self.notify("Failed to send motor test command", severity="error")
+                self.log_test_result("❌ Failed to send motor test command", "red")
 
         except ValueError:
-            self.notify("Invalid input values", severity="error")
+            self.log_test_result("❌ Invalid input values", "red")
         except Exception as e:
-            self.notify(f"Error: {e}", severity="error")
+            self.log_test_result(f"❌ Error: {e}", "red")
+
+    def start_compass_calibration(self):
+        """Start compass calibration."""
+        if not self.mavlink_service.is_connected():
+            self.log_test_result("❌ Compass cal failed: Not connected", "red")
+            return
+
+        try:
+            success = self.mavlink_service.start_compass_calibration(autosave=True)
+            if success:
+                self.log_test_result("🧭 Compass calibration started - rotate vehicle in all orientations", "cyan")
+            else:
+                self.log_test_result("❌ Failed to start compass calibration", "red")
+        except Exception as e:
+            self.log_test_result(f"❌ Error: {e}", "red")
+
+    def cancel_compass_calibration(self):
+        """Cancel compass calibration."""
+        if not self.mavlink_service.is_connected():
+            self.log_test_result("❌ Cancel failed: Not connected", "red")
+            return
+
+        try:
+            success = self.mavlink_service.cancel_compass_calibration()
+            if success:
+                self.log_test_result("🧭 Compass calibration cancelled", "yellow")
+            else:
+                self.log_test_result("❌ Failed to cancel compass calibration", "red")
+        except Exception as e:
+            self.log_test_result(f"❌ Error: {e}", "red")
+
+    def check_compass_health(self):
+        """Check compass calibration and health."""
+        if not self.mavlink_service.is_connected():
+            self.log_test_result("❌ Compass check failed: Not connected", "red")
+            return
+
+        try:
+            self.log_test_result("🧭 Checking compass health...", "cyan")
+
+            # Get compass offsets
+            offsets = self.mavlink_service.get_compass_offsets()
+
+            # Get current telemetry
+            telem = self.mavlink_service.get_telemetry()
+
+            # Check if calibrated
+            if offsets.get("calibrated"):
+                self.log_test_result("✓ Compass is calibrated", "green")
+                self.log_test_result(
+                    f"  Offsets: X={offsets.get('COMPASS_OFS_X', 0):.0f} "
+                    f"Y={offsets.get('COMPASS_OFS_Y', 0):.0f} "
+                    f"Z={offsets.get('COMPASS_OFS_Z', 0):.0f}",
+                    "white",
+                )
+            else:
+                self.log_test_result("✗ Compass NOT calibrated (offsets are 0,0,0)", "red")
+
+            # Magnetic field strength
+            mag_field = telem.mag_field_strength
+            if mag_field > 0:
+                # Earth's magnetic field is typically 250-650 milligauss
+                if 200 < mag_field < 700:
+                    self.log_test_result(f"✓ Mag field: {mag_field:.0f} mG (normal)", "green")
+                else:
+                    self.log_test_result(f"⚠️  Mag field: {mag_field:.0f} mG (check for interference)", "yellow")
+            else:
+                self.log_test_result("⚠️  Mag field: No data available", "yellow")
+
+        except Exception as e:
+            self.log_test_result(f"❌ Error checking compass: {e}", "red")
 
 
 class ParameterScreen(Screen):
@@ -326,7 +418,6 @@ class ParameterScreen(Screen):
         height: 1fr;
         border: solid $primary;
         margin: 1;
-        padding: 1;
     }
 
     ParameterTable {
@@ -353,6 +444,16 @@ class ParameterScreen(Screen):
 
     CommandPanel Label {
         margin: 0 1 0 0;
+    }
+
+    #test-log-container {
+        height: 10;
+        border: solid $primary;
+        margin: 1 0;
+    }
+
+    #test-log {
+        height: 100%;
     }
 
     #messages-container {
@@ -449,34 +550,38 @@ class ParameterScreen(Screen):
 
     def update_telemetry_display(self):
         """Update the telemetry display with current data."""
-        if not self.mavlink_service.is_connected():
-            return
+        try:
+            if not self.mavlink_service.is_connected():
+                return
 
-        # Update telemetry data from MAVLink
-        self.mavlink_service.update_telemetry()
+            # Update telemetry data from MAVLink
+            self.mavlink_service.update_telemetry()
 
-        # Get telemetry data
-        telem = self.mavlink_service.get_telemetry()
-        gps_status = self.mavlink_service.get_gps_status()
+            # Get telemetry data
+            telem = self.mavlink_service.get_telemetry()
+            gps_status = self.mavlink_service.get_gps_status()
 
-        # Update the display
-        telemetry_widget = self.query_one("#telemetry", TelemetryDisplay)
-        telemetry_widget.update_display(
-            gps_status=gps_status,
-            battery_voltage=telem.battery_voltage,
-            battery_current=telem.battery_current,
-            battery_remaining=telem.battery_remaining,
-            heading=telem.heading,
-            roll=telem.roll,
-            pitch=telem.pitch,
-            armed=telem.armed,
-            mode=telem.mode,
-        )
+            # Update the display
+            telemetry_widget = self.query_one("#telemetry", TelemetryDisplay)
+            telemetry_widget.update_display(
+                gps_status=gps_status,
+                battery_voltage=telem.battery_voltage,
+                battery_current=telem.battery_current,
+                battery_remaining=telem.battery_remaining,
+                heading=telem.heading,
+                roll=telem.roll,
+                pitch=telem.pitch,
+                armed=telem.armed,
+                mode=telem.mode,
+            )
 
-        # Update messages
-        messages = self.mavlink_service.get_messages(limit=50)
-        message_widget = self.query_one("#messages", MessageDisplay)
-        message_widget.add_messages(messages)
+            # Update messages
+            messages = self.mavlink_service.get_messages(limit=50)
+            message_widget = self.query_one("#messages", MessageDisplay)
+            message_widget.add_messages(messages)
+        except Exception as e:
+            # Log error but don't crash
+            self.app.log(f"Telemetry update error: {e}")
 
     @on(Button.Pressed, "#btn-connect")
     def handle_connect(self):
