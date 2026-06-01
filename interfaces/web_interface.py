@@ -1,8 +1,10 @@
 """NiceGUI web interface for ArduCLI."""
 
 import asyncio
+import json
 import re
 from collections import OrderedDict
+from pathlib import Path
 from typing import Optional
 
 from nicegui import ui
@@ -12,9 +14,13 @@ from services import MAVLinkService, ParameterMetadataService, ParamMeta
 
 
 class WebInterface:
+    _RECENT_CONNS_FILE = Path.home() / ".arducli" / "recent_connections.json"
+    _MAX_RECENT = 10
+
     def __init__(self, config: Optional[ConnectionConfig] = None):
         self.service = MAVLinkService(config)
         self._meta_service = ParameterMetadataService()
+        self._recent_conns: list[str] = self._load_recent_conns()
         self._param_rows: list = []
         self._recently_accessed: OrderedDict = OrderedDict()
         self._recently_modified: OrderedDict = OrderedDict()
@@ -37,12 +43,33 @@ class WebInterface:
         self._recent_accessed_col = None
         self._recent_modified_col = None
         self._connect_btn = None
+        self._conn_input = None
         self._reboot_btn = None
         self._raw_table = None
+        self._arm_btn = None
+        self._mode_btn = None
         self._message_log = None
         self._params_msg_log = None
         self._telemetry = {}
         self._statusbar = {}
+
+    def _load_recent_conns(self) -> list[str]:
+        try:
+            return json.loads(self._RECENT_CONNS_FILE.read_text())
+        except Exception:
+            return []
+
+    def _save_recent_conn(self, conn_str: str):
+        if not conn_str:
+            return
+        conns = [c for c in self._recent_conns if c != conn_str]
+        conns.insert(0, conn_str)
+        self._recent_conns = conns[: self._MAX_RECENT]
+        try:
+            self._RECENT_CONNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._RECENT_CONNS_FILE.write_text(json.dumps(self._recent_conns))
+        except Exception:
+            pass
 
     def register_routes(self):
         """Register @ui.page routes. Must be called at module import time for reload to work."""
@@ -62,7 +89,7 @@ class WebInterface:
             ui.label("ArduCLI").classes("text-lg font-bold font-mono")
             self._status_label = ui.label("● Not connected").classes("text-red-400 text-sm font-mono")
             ui.space()
-            conn_input = (
+            self._conn_input = (
                 ui.input(
                     placeholder="Connection string  (blank = auto-serial,  udpin:0.0.0.0:14550,  tcp:192.168.1.5:5760)"
                 )
@@ -70,10 +97,19 @@ class WebInterface:
                 .props("dense outlined dark")
                 .style("min-width: 420px")
             )
-            self._connect_btn = ui.button("Connect", on_click=lambda: self._do_connect(conn_input.value)).props(
-                "color=primary dense"
-            )
-            ui.button("Disconnect", on_click=self._do_disconnect).props("color=negative dense outline")
+            with ui.element("div"):
+                ui.button("▾", on_click=lambda: recent_menu.open()).props("dense flat color=grey-5").classes(
+                    "font-mono"
+                )
+                with ui.menu() as recent_menu:
+                    if self._recent_conns:
+                        for cs in self._recent_conns:
+                            ui.menu_item(cs, on_click=lambda c=cs: setattr(self._conn_input, "value", c)).classes(
+                                "font-mono text-sm"
+                            )
+                    else:
+                        ui.menu_item("No recent connections").props("disabled")
+            self._connect_btn = ui.button("Connect", on_click=self._toggle_connection).props("color=primary dense")
             ui.button("Load Params", on_click=self._load_parameters).props("color=secondary dense")
             self._reboot_btn = ui.button("Reboot FC", on_click=self._confirm_reboot).props(
                 "color=warning dense outline"
@@ -85,10 +121,20 @@ class WebInterface:
             "border-bottom: 1px solid #374151;"
         ):
             sb["armed"] = ui.label("DISARMED").classes("font-mono text-sm font-bold text-green-400")
+            self._arm_btn = (
+                ui.button("Arm", on_click=self._confirm_arm_disarm)
+                .props("dense flat no-caps size=sm color=green-4")
+                .classes("font-mono")
+            )
             ui.label("|").classes("text-gray-600")
             with ui.row().classes("items-center gap-1"):
                 ui.label("Mode:").classes("text-gray-400 text-xs font-mono")
                 sb["mode"] = ui.label("—").classes("font-mono text-sm text-white")
+            self._mode_btn = (
+                ui.button("⟳", on_click=self._show_mode_picker)
+                .props("dense flat size=sm color=blue-4")
+                .classes("font-mono")
+            )
             ui.label("|").classes("text-gray-600")
             with ui.row().classes("items-center gap-1"):
                 ui.label("HDG:").classes("text-gray-400 text-xs font-mono")
@@ -423,6 +469,24 @@ class WebInterface:
 
     # ── Button / event handlers ───────────────────────────────────────────────
 
+    async def _toggle_connection(self):
+        if self.service.is_connected():
+            await self._do_disconnect()
+        else:
+            await self._do_connect(self._conn_input.value if self._conn_input else "")
+
+    def _set_connect_btn_state(self, connected: bool):
+        if not self._connect_btn:
+            return
+        if connected:
+            self._connect_btn._props["label"] = "Disconnect"
+            self._connect_btn._props["color"] = "negative"
+        else:
+            self._connect_btn._props["label"] = "Connect"
+            self._connect_btn._props["color"] = "primary"
+        self._connect_btn.props(remove="loading")
+        self._connect_btn.update()
+
     async def _do_connect(self, conn_str: str):
         if self._connecting:
             return
@@ -434,10 +498,10 @@ class WebInterface:
 
         ok = await asyncio.to_thread(self.service.connect, port=conn_str or None)
         self._connecting = False
-        if self._connect_btn:
-            self._connect_btn.props(remove="loading")
-            self._connect_btn.update()
         if ok:
+            if conn_str:
+                self._save_recent_conn(conn_str)
+            self._set_connect_btn_state(True)
             self._status_label.set_text("● Connected")
             self._status_label.update()
             self._status_label.classes("text-green-400", remove="text-red-400")
@@ -448,6 +512,7 @@ class WebInterface:
                 pass
             await self._load_parameters()
         else:
+            self._set_connect_btn_state(False)
             self._status_label.set_text("● Not connected")
             self._status_label.update()
             self._status_label.classes("text-red-400", remove="text-green-400")
@@ -455,6 +520,7 @@ class WebInterface:
 
     async def _do_disconnect(self):
         self.service.disconnect()
+        self._set_connect_btn_state(False)
         self._status_label.set_text("● Not connected")
         self._status_label.update()
         self._status_label.classes("text-red-400", remove="text-green-400")
@@ -617,6 +683,79 @@ class WebInterface:
                 else:
                     ui.label(f"{name}  {val}").classes("font-mono text-xs text-gray-300")
 
+    async def _confirm_arm_disarm(self):
+        if not self.service.is_connected():
+            ui.notify("Not connected", type="negative")
+            return
+        armed = self.service.get_telemetry().armed
+        if armed:
+            with ui.dialog() as dlg, ui.card().classes("bg-gray-800 text-white"):
+                ui.label("Disarm?").classes("text-lg font-bold mb-2")
+                ui.label("The vehicle will disarm immediately.").classes("text-gray-300 text-sm mb-4")
+                with ui.row().classes("gap-2 justify-end w-full"):
+                    ui.button("Cancel", on_click=dlg.close).props("flat color=grey")
+                    ui.button("Disarm", on_click=lambda: self._do_disarm(dlg)).props("color=negative")
+            dlg.open()
+        else:
+            with ui.dialog() as dlg, ui.card().classes("bg-gray-800 text-white"):
+                ui.label("Arm vehicle?").classes("text-lg font-bold mb-2 text-red-400")
+                ui.label("⚠  Ensure props are removed or area is clear.").classes(
+                    "text-yellow-300 text-sm font-bold mb-4"
+                )
+                with ui.row().classes("gap-2 justify-end w-full"):
+                    ui.button("Cancel", on_click=dlg.close).props("flat color=grey")
+                    ui.button("Arm", on_click=lambda: self._do_arm(dlg)).props("color=warning")
+            dlg.open()
+
+    async def _do_arm(self, dialog):
+        dialog.close()
+        ok = await asyncio.to_thread(self.service.arm)
+        if ok:
+            ui.notify("Arm command sent", type="positive")
+        else:
+            ui.notify("Failed to send arm command", type="negative")
+
+    async def _do_disarm(self, dialog):
+        dialog.close()
+        ok = await asyncio.to_thread(self.service.disarm)
+        if ok:
+            ui.notify("Disarm command sent", type="positive")
+        else:
+            ui.notify("Failed to send disarm command", type="negative")
+
+    async def _show_mode_picker(self):
+        if not self.service.is_connected():
+            ui.notify("Not connected", type="negative")
+            return
+        modes = self.service.get_available_modes()
+        if not modes:
+            ui.notify("No mode list available for this vehicle type", type="warning")
+            return
+        current = self.service.get_telemetry().mode
+
+        with ui.dialog() as dlg, ui.card().classes("bg-gray-800 text-white").style("min-width: 260px"):
+            ui.label("Set Flight Mode").classes("text-lg font-bold mb-2")
+            with ui.column().classes("w-full gap-1"):
+                for num, name in sorted(modes.items(), key=lambda x: x[1]):
+                    is_current = name == current
+                    (
+                        ui.button(
+                            f"{'● ' if is_current else '  '}{name}",
+                            on_click=lambda n=num, nm=name, d=dlg: self._do_set_mode(n, nm, d),
+                        )
+                        .props("flat dense no-caps align=left")
+                        .classes("w-full font-mono text-sm " + ("text-yellow-300" if is_current else "text-gray-300"))
+                    )
+        dlg.open()
+
+    async def _do_set_mode(self, mode_number: int, mode_name: str, dialog):
+        dialog.close()
+        ok = await asyncio.to_thread(self.service.set_mode, mode_number)
+        if ok:
+            ui.notify(f"Mode → {mode_name}", type="positive")
+        else:
+            ui.notify("Failed to set mode", type="negative")
+
     async def _confirm_reboot(self):
         if not self.service.is_connected():
             ui.notify("Not connected", type="negative")
@@ -668,6 +807,7 @@ class WebInterface:
         msg = f"Device disconnected: {reason}" if reason else "Device disconnected"
         print(f"[disconnect] {msg}")
         try:
+            self._set_connect_btn_state(False)
             if self._status_label:
                 self._status_label.set_text("● Not connected")
                 self._status_label.update()
@@ -701,9 +841,17 @@ class WebInterface:
                 if td.armed:
                     sb["armed"].set_text("ARMED")
                     sb["armed"].classes("text-red-400", remove="text-green-400")
+                    if self._arm_btn:
+                        self._arm_btn._props["label"] = "Disarm"
+                        self._arm_btn._props["color"] = "negative"
+                        self._arm_btn.update()
                 else:
                     sb["armed"].set_text("DISARMED")
                     sb["armed"].classes("text-green-400", remove="text-red-400")
+                    if self._arm_btn:
+                        self._arm_btn._props["label"] = "Arm"
+                        self._arm_btn._props["color"] = "green-4"
+                        self._arm_btn.update()
                 sb["mode"].set_text(td.mode)
                 sb["mode"].update()
                 sb["heading"].set_text(f"{td.heading:.0f}°")

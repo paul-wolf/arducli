@@ -2,6 +2,7 @@ from typing import Callable, Dict, Optional
 
 from pymavlink import mavutil
 
+from constants.mav import COPTER_MODES, PLANE_MODES, ROVER_MODES
 from models import ConnectionConfig, DeviceInfo
 
 from .connection_service import ConnectionService
@@ -150,6 +151,89 @@ class MAVLinkService:
         return self.telemetry_service._raw
 
     # Command methods
+
+    def arm(self, force: bool = False) -> bool:
+        """Arm the vehicle."""
+        if not self.is_connected():
+            raise RuntimeError("Not connected")
+        connection = self.connection_service.get_connection()
+        try:
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                0,
+                1,  # 1 = arm
+                2989 if force else 0,  # magic number for force-arm bypass
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            return True
+        except Exception:
+            return False
+
+    def disarm(self, force: bool = False) -> bool:
+        """Disarm the vehicle."""
+        if not self.is_connected():
+            raise RuntimeError("Not connected")
+        connection = self.connection_service.get_connection()
+        try:
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                0,
+                0,  # 0 = disarm
+                21196 if force else 0,  # magic number for force-disarm
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            return True
+        except Exception:
+            return False
+
+    def set_mode(self, mode_number: int) -> bool:
+        """Set flight mode by mode number."""
+        if not self.is_connected():
+            raise RuntimeError("Not connected")
+        connection = self.connection_service.get_connection()
+        try:
+            connection.mav.command_long_send(
+                connection.target_system,
+                connection.target_component,
+                mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+                0,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_number,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            return True
+        except Exception:
+            return False
+
+    def get_available_modes(self) -> Dict[int, str]:
+        """Return {mode_number: mode_name} for the connected vehicle type."""
+        device_info = self.get_device_info()
+        if not device_info:
+            return {}
+        vt = device_info.vehicle_type
+        if vt in [2, 13, 14, 15]:
+            return COPTER_MODES
+        elif vt == 1:
+            return PLANE_MODES
+        elif vt in [10, 11]:
+            return ROVER_MODES
+        return {}
 
     def reboot(self) -> bool:
         """Send MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN to reboot the autopilot."""

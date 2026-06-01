@@ -73,9 +73,13 @@ class ConnectionService:
             # Attempt connection
             connection = mavutil.mavlink_connection(port, baud=self.config.baud_rate)
 
+            # Network connections need more time for the remote to discover the socket.
+            is_network = port.lower().startswith(("udp", "tcp", "mqtt"))
+            timeout = 30 if is_network else self.config.timeout
+
             # Wait for heartbeat
             start_time = time.time()
-            while time.time() - start_time < self.config.timeout:
+            while time.time() - start_time < timeout:
                 if connection.wait_heartbeat(timeout=1):
                     # Heartbeat received, parse device info
                     heartbeat = connection.recv_match(type="HEARTBEAT", blocking=True)
@@ -102,7 +106,7 @@ class ConnectionService:
                         return True
 
             if on_progress:
-                on_progress(f"No heartbeat on port {port} within {self.config.timeout} seconds")
+                on_progress(f"No heartbeat on {port} within {timeout}s")
 
         except Exception as e:
             if on_progress:
