@@ -30,6 +30,8 @@ class WebInterface:
         self._filter_text: str = ""
         self._connecting: bool = False
         self._loading_params: bool = False
+        self._load_current: int = 0
+        self._load_total: int = 0
         self._reboot_needed: bool = False
         self._raw_filter: str = ""
         self._raw_prev: dict = {}  # {type.field: last_seen_value}
@@ -48,10 +50,18 @@ class WebInterface:
         self._raw_table = None
         self._arm_btn = None
         self._mode_btn = None
+        self._load_progress_row = None
+        self._load_progress_bar = None
+        self._load_progress_label = None
         self._message_log = None
         self._params_msg_log = None
         self._telemetry = {}
         self._statusbar = {}
+
+    def _on_load_progress(self, current: int, total: int):
+        # Called from background thread — only update plain ints, no UI calls.
+        self._load_current = current
+        self._load_total = total
 
     def _load_recent_conns(self) -> list[str]:
         try:
@@ -146,6 +156,16 @@ class WebInterface:
                 ui.label("Pitch:").classes("text-gray-400 text-xs font-mono")
                 sb["pitch"] = ui.label("—").classes("font-mono text-sm text-white")
 
+        # Parameter load progress (hidden until a load is in progress)
+        self._load_progress_row = ui.row().classes("w-full items-center gap-3 px-4 py-1 bg-gray-700")
+        with self._load_progress_row:
+            ui.label("Loading parameters:").classes("text-xs font-mono text-gray-300 whitespace-nowrap")
+            self._load_progress_bar = ui.linear_progress(
+                value=0, color="light-blue", show_value=False, size="10px"
+            ).classes("flex-grow")
+            self._load_progress_label = ui.label("").classes("text-xs font-mono text-gray-300 whitespace-nowrap")
+        self._load_progress_row.set_visibility(False)
+
         # Tabs
         with ui.tabs().classes("w-full bg-gray-800 text-white") as tabs:
             t_params = ui.tab("Parameters", icon="tune")
@@ -166,6 +186,7 @@ class WebInterface:
         ui.timer(0.5, self._tick_telemetry)
         ui.timer(1.0, self._tick_messages)
         ui.timer(1.0, self._tick_raw)
+        ui.timer(0.2, self._tick_load_progress)
 
     # ── Parameters panel ──────────────────────────────────────────────────────
 
@@ -547,8 +568,10 @@ class WebInterface:
                     )
                 )
 
+        self._load_current = 0
+        self._load_total = 0
         try:
-            params = await asyncio.to_thread(self.service.load_parameters, None)
+            params = await asyncio.to_thread(self.service.load_parameters, self._on_load_progress)
             self._rebuild_param_rows(params)
             self._param_table.rows = self._param_rows.copy()
             self._param_table.update()
@@ -828,6 +851,24 @@ class WebInterface:
             self._params_msg_log.clear()
 
     # ── Timers ────────────────────────────────────────────────────────────────
+
+    def _tick_load_progress(self):
+        if not self._load_progress_row:
+            return
+        if not self._loading_params:
+            self._load_progress_row.set_visibility(False)
+            return
+        total = self._load_total
+        current = self._load_current
+        if total == 0:
+            return
+        self._load_progress_row.set_visibility(True)
+        progress = min(current / total, 1.0)
+        self._load_progress_bar.value = progress
+        self._load_progress_bar.update()
+        pct = int(progress * 100)
+        self._load_progress_label.set_text(f"{current} / {total}  ({pct}%)")
+        self._load_progress_label.update()
 
     def _tick_telemetry(self):
         if not self.service.is_connected() or self._loading_params:
