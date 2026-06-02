@@ -1,9 +1,11 @@
 """NiceGUI web interface for ArduCLI."""
 
 import asyncio
+import base64
 import json
 import re
 from collections import OrderedDict
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -195,6 +197,12 @@ class WebInterface:
             ui.input("Filter / regex", on_change=lambda e: self._on_filter_change(e.value)).classes("font-mono").props(
                 "clearable dense outlined dark"
             ).style("min-width: 320px")
+            ui.button("Export ↓", on_click=self._export_params).props("dense outline color=grey-5").classes(
+                "font-mono text-xs"
+            )
+            ui.button("Import / Compare ↑", on_click=self._show_import_dialog).props(
+                "dense outline color=grey-5"
+            ).classes("font-mono text-xs")
 
         with ui.row().classes("w-full gap-3").style("height: calc(100vh - 200px)"):
             # Left: messages sidebar
@@ -821,6 +829,215 @@ class WebInterface:
                     break
             except Exception:
                 break
+
+    # ── Parameter file export / import / diff ────────────────────────────────
+
+    def _export_params(self):
+        params = self.service.get_all_parameters()
+        if not params:
+            ui.notify("No parameters loaded", type="warning")
+            return
+        lines = [f"# ArduCLI export  {date.today()}"]
+        for name, value in sorted(params.items()):
+            lines.append(f"{name},{value}")
+        content = "\n".join(lines)
+        b64 = base64.b64encode(content.encode()).decode()
+        filename = f"params_{date.today()}.param"
+        ui.run_javascript(f"""
+            const a = document.createElement('a');
+            a.href = 'data:text/plain;base64,{b64}';
+            a.download = '{filename}';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        """)
+
+    @staticmethod
+    def _parse_param_file(content: str) -> dict[str, float]:
+        result = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            sep = "," if "," in line else "\t"
+            parts = line.split(sep, 1)
+            if len(parts) == 2:
+                name = parts[0].strip().upper()
+                try:
+                    result[name] = float(parts[1].strip())
+                except ValueError:
+                    pass
+        return result
+
+    @staticmethod
+    def _compute_diff(file_params: dict, fc_params: dict) -> list[dict]:
+        rows = []
+        for name, file_val in sorted(file_params.items()):
+            fc_val = fc_params.get(name)
+            if fc_val is None:
+                rows.append(
+                    {
+                        "key": name,
+                        "name": name,
+                        "fc": "—",
+                        "file": f"{file_val:.6g}",
+                        "delta": "—",
+                        "status": "new",
+                        "file_val": file_val,
+                    }
+                )
+            elif abs(fc_val - file_val) > 1e-6:
+                rows.append(
+                    {
+                        "key": name,
+                        "name": name,
+                        "fc": f"{fc_val:.6g}",
+                        "file": f"{file_val:.6g}",
+                        "delta": f"{file_val - fc_val:+.6g}",
+                        "status": "changed",
+                        "file_val": file_val,
+                    }
+                )
+        return rows
+
+    async def _show_import_dialog(self):
+        state = {"rows": [], "table": None}
+        fc_params = {r["name"]: float(r["value"]) for r in self._param_rows}
+
+        with ui.dialog() as dlg, ui.card().classes("bg-gray-800 text-white").style(
+            "min-width: 750px; max-width: 92vw;"
+        ):
+            ui.label("Import / Compare Parameters").classes("text-lg font-bold mb-1")
+            ui.label("Upload a .param file to see what differs from the current FC values.").classes(
+                "text-xs text-gray-400 mb-2"
+            )
+
+            diff_col = ui.column().classes("w-full")
+
+            def handle_upload(e):
+                content = e.content.read().decode("utf-8", errors="ignore")
+                file_params = self._parse_param_file(content)
+                rows = self._compute_diff(file_params, fc_params)
+                state["rows"] = rows
+                diff_col.clear()
+                with diff_col:
+                    if not rows:
+                        ui.label("✓ No differences — file matches FC parameters.").classes(
+                            "text-green-400 text-sm my-2"
+                        )
+                        return
+                    n_changed = sum(1 for r in rows if r["status"] == "changed")
+                    n_new = sum(1 for r in rows if r["status"] == "new")
+                    parts = []
+                    if n_changed:
+                        parts.append(f"{n_changed} changed")
+                    if n_new:
+                        parts.append(f"{n_new} new")
+                    ui.label(", ".join(parts)).classes("text-sm text-yellow-300 mb-1")
+
+                    cols = [
+                        {
+                            "name": "name",
+                            "label": "Parameter",
+                            "field": "name",
+                            "align": "left",
+                            "style": "width:170px",
+                        },
+                        {"name": "fc", "label": "Current FC", "field": "fc", "align": "right", "style": "width:110px"},
+                        {"name": "file", "label": "File", "field": "file", "align": "right", "style": "width:110px"},
+                        {"name": "delta", "label": "Δ", "field": "delta", "align": "right", "style": "width:100px"},
+                        {
+                            "name": "status",
+                            "label": "Status",
+                            "field": "status",
+                            "align": "left",
+                            "style": "width:80px",
+                        },
+                    ]
+                    tbl = (
+                        ui.table(
+                            columns=cols,
+                            rows=rows,
+                            row_key="key",
+                            selection="multiple",
+                        )
+                        .classes("w-full font-mono text-sm")
+                        .props("dense dark virtual-scroll")
+                        .style("max-height: 45vh;")
+                    )
+                    tbl.selected = list(rows)
+                    state["table"] = tbl
+
+                    with ui.row().classes("w-full items-center gap-2 mt-2"):
+                        ui.button("All", on_click=lambda: _sel_all(tbl, rows)).props("flat dense size=sm color=grey")
+                        ui.button("None", on_click=lambda: _sel_none(tbl)).props("flat dense size=sm color=grey")
+                        ui.space()
+                        ui.label("").classes("text-xs text-gray-400").bind_text_from(
+                            tbl, "selected", lambda s: f"{len(s)} selected"
+                        )
+                        if self.service.is_connected():
+                            ui.button(
+                                "Apply Selected →",
+                                on_click=lambda: asyncio.ensure_future(
+                                    self._apply_param_changes(state["table"].selected, dlg)
+                                ),
+                            ).props("color=warning dense")
+
+            def _sel_all(tbl, rows):
+                tbl.selected = list(rows)
+                tbl.update()
+
+            def _sel_none(tbl):
+                tbl.selected = []
+                tbl.update()
+
+            ui.upload(on_upload=handle_upload, auto_upload=True).props(
+                "accept=.param,.txt flat dense label='Choose .param file'"
+            ).classes("w-full mb-1")
+            ui.separator().classes("my-1")
+
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Close", on_click=dlg.close).props("flat color=grey")
+
+        dlg.open()
+
+    async def _apply_param_changes(self, selected: list, dialog):
+        if not selected:
+            ui.notify("No parameters selected", type="warning")
+            return
+        if not self.service.is_connected():
+            ui.notify("Not connected", type="negative")
+            return
+        dialog.close()
+
+        total = len(selected)
+        applied = 0
+        failed = []
+
+        for row in selected:
+            try:
+                ok = await asyncio.to_thread(self.service.set_parameter, row["name"], row["file_val"])
+                if ok:
+                    applied += 1
+                    for r in self._param_rows:
+                        if r["name"] == row["name"]:
+                            r["value"] = f"{row['file_val']:.6g}"
+                            break
+                else:
+                    failed.append(row["name"])
+            except Exception:
+                failed.append(row["name"])
+
+        self._filter(self._filter_text)
+
+        if failed:
+            ui.notify(
+                f"Applied {applied}/{total}. Failed: {', '.join(failed[:5])}",
+                type="warning",
+                timeout=8000,
+            )
+        else:
+            ui.notify(f"Applied {applied} parameters successfully", type="positive")
 
     def _mark_disconnected(self, reason: str = ""):
         """Clean up after an unexpected device disconnect. Safe to call multiple times."""
