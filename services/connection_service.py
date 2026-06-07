@@ -77,13 +77,14 @@ class ConnectionService:
             is_network = port.lower().startswith(("udp", "tcp", "mqtt"))
             timeout = 30 if is_network else self.config.timeout
 
-            # Wait for heartbeat
+            # Wait for a heartbeat from the autopilot (not from a GCS tool).
+            # When multiple GCS tools share a MAVLink Router, GCS heartbeats
+            # (MAV_TYPE_GCS = 6) arrive alongside FC heartbeats and must be ignored.
             start_time = time.time()
             while time.time() - start_time < timeout:
                 if connection.wait_heartbeat(timeout=1):
-                    # Heartbeat received, parse device info
                     heartbeat = connection.recv_match(type="HEARTBEAT", blocking=True)
-                    if heartbeat:
+                    if heartbeat and heartbeat.type != mavutil.mavlink.MAV_TYPE_GCS:
                         self.connection = connection
                         self.device_info = DeviceInfo(
                             system_id=connection.target_system,

@@ -147,11 +147,14 @@ class TelemetryService:
                 updated = True
 
             elif msg_type == "HEARTBEAT":
-                self.data.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                if self._vehicle_type is None:
-                    self._vehicle_type = msg.type
-                self.data.mode = self._decode_mode(self._vehicle_type, msg.custom_mode)
-                updated = True
+                # Ignore heartbeats from GCS tools (Mission Planner, QGC, etc.)
+                # MAV_TYPE_GCS = 6; they carry custom_mode=0 which decodes as STABILIZE.
+                if msg.type != mavutil.mavlink.MAV_TYPE_GCS:
+                    self.data.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                    if self._vehicle_type is None:
+                        self._vehicle_type = msg.type
+                    self.data.mode = self._decode_mode(self._vehicle_type, msg.custom_mode)
+                    updated = True
 
             elif msg_type == "EKF_STATUS_REPORT":
                 self.data.ekf_flags = msg.flags
